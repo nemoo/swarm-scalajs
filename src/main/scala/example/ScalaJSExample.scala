@@ -12,10 +12,18 @@ case class Point(x: Double, y: Double){
   def *(d: Double) = Point(x * d, y * d)
   def /(d: Double) = Point(x / d, y / d)
   def length = Math.sqrt(x * x + y * y)
-  def normalize = if (length != 0 ) this./(length)
+  def normalize = if (length != 0 ) this / length
     else this
-  def distance(p: Point) = this.-(p).length
+  def distance(p: Point) = (this - p).length
   def invert = Point(-x, -y)
+}
+
+object PointUtil{
+  def averagePoint(points: List[Point]): Option[Point] =
+    if (points.length > 0)
+      Option(Point(points.map(_.x).sum / points.size, points.map(_.y).sum / points.size ))
+    else
+      None
 }
 
 @JSExport
@@ -49,10 +57,10 @@ object ScalaJSExample {
 
     def move(agent: Agent, others: List[Agent]): Agent = {
 
+      // repulsion
       val tooClose: List[Point] = others
         .filter(other => agent.pos.distance(other.pos) < swarm.repulsionRadius)
         .map(_.pos)
-
       val sumVectors = tooClose.foldLeft(Point(0,0)){ (a,b) =>
         a + (b - agent.pos)
       }
@@ -60,33 +68,42 @@ object ScalaJSExample {
       val inverseVector = normalized.invert * swarm.maxSpeed
       val tooCloseImpulse = agent.v + inverseVector
 
-      println(s"agent $agent")
-      println(s"tooClose $tooClose")
-      println(s"sumVectors $sumVectors")
-      println(s"normalized $normalized")
-      println(s"inverseVector $inverseVector")
-      println(s"tooCloseImpulse $tooCloseImpulse")
-      println("-")
+      val neighbors: List[Agent] = others
+        .filter{
+          other =>
+            val distance = agent.pos.distance(other.pos)
+            distance < swarm.neighborRadius && distance > swarm.repulsionRadius
+        }
 
-      val neighbors: List[Point] = others
-        .filter(other => agent.pos.distance(other.pos) < swarm.neighborRadius)
-        .map(_.pos)
-
-      val aggregateImpulse =
-        if (neighbors.isEmpty)
-          Point(0,0)
-        else {
-          val (avgX, avgY) = (neighbors.map(_.x).sum / neighbors.size, neighbors.map(_.y).sum / neighbors.size )
-          val centerOfNeighbors = Point(avgX, avgY)
+      // swim towards neighbors
+      val neighborsPositions: List[Point] = neighbors.map(_.pos)
+      val aggregateImpulse = PointUtil.averagePoint(neighborsPositions).map{
+        centerOfNeighbors =>
           val vectorTowardsNeighborsNormalized = (centerOfNeighbors - agent.pos).normalize
           val vectorTowardsNeighbors = vectorTowardsNeighborsNormalized * swarm.maxSpeed / 2
           vectorTowardsNeighbors
-        }
+      }.getOrElse(Point(0,0))
 
-      val newSpeed = agent.v + tooCloseImpulse + aggregateImpulse
+
+      // align direction with neighbors
+      val neighborsVelocities: List[Point] = neighbors.map(_.v)
+      val averageAlignNeighborsVelocity = PointUtil.averagePoint(neighborsVelocities)
+          .getOrElse(Point(0,0))
+
+
+      val newSpeed = agent.v + tooCloseImpulse + aggregateImpulse * 0.1 + averageAlignNeighborsVelocity * 0.2
+//      val newSpeed = agent.v + tooCloseImpulse + averageAlignNeighborsVelocity * 0.2
       val newSpeedMax = newSpeed.normalize * swarm.maxSpeed
 
-      agent.copy(pos = agent.pos + newSpeedMax,
+      val pos = (agent.pos + newSpeedMax) match {
+        case Point(x,y) if x > canvas.width => Point(x - canvas.width, y)
+        case Point(x,y) if y > canvas.height => Point(x, y - canvas.height)
+        case Point(x,y) if x < 0 => Point(x + canvas.width, y)
+        case Point(x,y) if y < 0 => Point(x, y + canvas.height)
+        case x => x
+      }
+
+      agent.copy(pos = pos,
         v = newSpeedMax)
     }
 
@@ -136,7 +153,7 @@ object ScalaJSExample {
 //      (): js.Any
 //    }
 
-    val agents = (1 to 80).map{i=>
+    val agents = (1 to 100).map{i=>
       Agent(pos = Point(Random.nextInt(canvas.width), Random.nextInt(canvas.height)),
         v = Point( -3 + Random.nextDouble * 6, -3 + Random.nextDouble * 6))
     }.toList
