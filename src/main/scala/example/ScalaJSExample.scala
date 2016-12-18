@@ -29,24 +29,21 @@ object PointUtil{
 @JSExport
 object ScalaJSExample {
 
-  case class Agent(pos: Point, v: Point)
+  val repulsionRadius = 15  // within this radius, agent is repelled from others
+  val alignmentRadius = 25  // within this radius, agent wants to align his heading
+  val neighborRadius = 40   // within this radius, agent seeks company of others
+  val maxSpeed = 1
 
-  case class Swarm(agents: List[Agent]){
-    val repulsionRadius = 10  // within this radius, agent is repelled from others
-    val alignmentRadius = 25  // within this radius, agent wants to align his heading
-    val neighborRadius = 40   // within this radius, agent seeks company of others
-    val maxSpeed = 3
-  }
+  case class Agent(pos: Point, v: Point)
+  case class Swarm(agents: List[Agent])
 
 
   var startTime = js.Date.now()
-
   val canvas = dom.document
                   .getElementById("canvas")
                   .asInstanceOf[html.Canvas]
   val ctx = canvas.getContext("2d")
                   .asInstanceOf[dom.CanvasRenderingContext2D]
-
   var enemies = Seq.empty[Agent]
 
 
@@ -59,20 +56,23 @@ object ScalaJSExample {
 
       // repulsion
       val tooClose: List[Point] = others
-        .filter(other => agent.pos.distance(other.pos) < swarm.repulsionRadius)
+        .filter(other => agent.pos.distance(other.pos) < repulsionRadius)
         .map(_.pos)
       val sumVectors = tooClose.foldLeft(Point(0,0)){ (a,b) =>
         a + (b - agent.pos)
       }
-      val normalized = sumVectors.normalize
-      val inverseVector = normalized.invert * swarm.maxSpeed
+      val inverseVector =
+        if (sumVectors.length > 1)
+          sumVectors.invert / sumVectors.length
+        else
+          sumVectors.invert
       val tooCloseImpulse = agent.v + inverseVector
 
       val neighbors: List[Agent] = others
         .filter{
           other =>
             val distance = agent.pos.distance(other.pos)
-            distance < swarm.neighborRadius && distance > swarm.repulsionRadius
+            distance < neighborRadius && distance > repulsionRadius
         }
 
       // swim towards neighbors
@@ -80,7 +80,7 @@ object ScalaJSExample {
       val aggregateImpulse = PointUtil.averagePoint(neighborsPositions).map{
         centerOfNeighbors =>
           val vectorTowardsNeighborsNormalized = (centerOfNeighbors - agent.pos).normalize
-          val vectorTowardsNeighbors = vectorTowardsNeighborsNormalized * swarm.maxSpeed / 2
+          val vectorTowardsNeighbors = vectorTowardsNeighborsNormalized * maxSpeed / 2
           vectorTowardsNeighbors
       }.getOrElse(Point(0,0))
 
@@ -91,9 +91,11 @@ object ScalaJSExample {
           .getOrElse(Point(0,0))
 
 
-      val newSpeed = agent.v + tooCloseImpulse + aggregateImpulse * 0.1 + averageAlignNeighborsVelocity * 0.2
-//      val newSpeed = agent.v + tooCloseImpulse + averageAlignNeighborsVelocity * 0.2
-      val newSpeedMax = newSpeed.normalize * swarm.maxSpeed
+      val newSpeed = agent.v +
+        tooCloseImpulse * 0.5 +
+        aggregateImpulse * 0.1 +
+        averageAlignNeighborsVelocity * 0.1
+      val newSpeedMax = newSpeed.normalize * maxSpeed
 
       val pos = (agent.pos + newSpeedMax) match {
         case Point(x,y) if x > canvas.width => Point(x - canvas.width, y)
@@ -118,23 +120,14 @@ object ScalaJSExample {
 
   def draw(swarm: Swarm) = {
     ctx.fillStyle = "white"
-
     ctx.fillRect(0, 0, canvas.width, canvas.height)
-
     ctx.fillStyle = "blue"
-//    for (agent <- swarm.agents){
-//      ctx.fillRect(agent.pos.x - 10, agent.pos.y - 10, 20, 20)
-//    }
 
     for (agent <- swarm.agents){
       ctx.beginPath();
-//      ctx.strokeStyle = 'blue'
       ctx.moveTo(agent.pos.x,agent.pos.y);
-      ctx.lineTo(agent.pos.x + agent.v.x * 3,agent.pos.y + agent.v.y * 3);
+      ctx.lineTo(agent.pos.x + agent.v.x * 15,agent.pos.y + agent.v.y * 15);
       ctx.stroke();
-
-      //ctx.fillStyle = "white"
-      //ctx.fillText(agent.v.x + " " + agent.v.y, agent.pos.x + 10, agent.pos.y - 10)
     }
 
 
@@ -155,7 +148,7 @@ object ScalaJSExample {
 
     val agents = (1 to 100).map{i=>
       Agent(pos = Point(Random.nextInt(canvas.width), Random.nextInt(canvas.height)),
-        v = Point( -3 + Random.nextDouble * 6, -3 + Random.nextDouble * 6))
+        v = Point( -maxSpeed + Random.nextDouble * 2 * maxSpeed, -maxSpeed + Random.nextDouble * 2 * maxSpeed))
     }.toList
 
     var swarm = Swarm(agents)
